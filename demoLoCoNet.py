@@ -343,7 +343,7 @@ def prepare_input(args, tracks):
 def inference(args, cfg, visual_feature, audio_feature, lenTracks):
     # initialize model
     model = loconet(cfg)
-    model.loadParameters('')
+    model.loadParameters(args.pretrainModel)
     model = model.to(device='cuda')
     model.eval()
 
@@ -371,9 +371,13 @@ def inference(args, cfg, visual_feature, audio_feature, lenTracks):
             outsAV = model.model.forward_audio_visual_backend(
                 audioEmbed, visualEmbed, b, s)
             outsAV = outsAV.reshape(b, s, t, -1)[:, 0, :, :].reshape(b * t, -1)
-            predScore = model.lossAV(outsAV)
+            # LoCoNet の lossAV は特徴量 x(=256次元) を入力し self.FC を通して2クラスのロジットに変換します
+            logits = model.lossAV.FC(outsAV)
+            prob = torch.softmax(logits, dim=-1)[:, 1]  # speak class の確率
+            predScore = prob.detach().cpu()
             result[i] = predScore
-            print(sum(predScore < 0))
+            # デバッグ表示（負値は無いはずだが念のため）
+            print("negative scores:", (predScore < 0).sum().item())
 
     return result
 
@@ -404,10 +408,12 @@ def visualization(args, pred, tracks):
     for fidx, frame in tqdm.tqdm(enumerate(flist), total=len(flist)):
         image = cv2.imread(frame)
         for face in faces[fidx]:
-            clr = colorDict[int((face['score'] >= 0.0))]
-            if face['score'] >= 0:
+            # テンソルをPythonスカラーに変換
+            score_value = face['score'].item() if torch.is_tensor(face['score']) else face['score']
+            clr = colorDict[int((score_value >= 0.0))]
+            if score_value >= 0:
                 l.append(fidx)
-            txt = round(face['score'], 2)
+            txt = round(score_value, 2)
             p1 = (int(face['bbox'][0]), int(face['bbox'][1]))
             p2 = (int(face['bbox'][2]), int(face['bbox'][3]))
             cv2.rectangle(image, p1, p2, (0, clr, 255-clr), 3)
@@ -472,6 +478,10 @@ def main():
 
     # setup configuration
     default_config = {'cfg': './configs/multi.yaml'}
+    
+    # sys.argvをリセットしてbootstrapでの引数の二重パースを防ぐ
+    sys.argv = [sys.argv[0]]
+    
     cfg = bootstrap(default_cfg=default_config, print_cfg=True)
 
     warnings.filterwarnings("ignore")

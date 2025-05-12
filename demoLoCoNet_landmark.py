@@ -345,7 +345,7 @@ def prepare_input(args, tracks):
 def inference(args, cfg, visual_feature, audio_feature, lenTracks):
     # initialize model
     model = loconet(cfg, n_channel=4, layer=1)
-    model.loadParameters('')
+    model.loadParameters(args.pretrainModel)
     model = model.to(device='cuda')
     model.eval()
 
@@ -366,9 +366,21 @@ def inference(args, cfg, visual_feature, audio_feature, lenTracks):
             audioFeature = audio_feature[i].to(dtype=torch.float, device='cuda')
 
             # run frontend part of the model
-            predScore = model.model.forward_evaluation(audioFeature, visualFeature, landmark, None, None, False)
+            features = model.model.forward_evaluation(audioFeature, visualFeature, landmark, None, None, False)
+            
+            # 特徴量をロジットに変換し、確率を計算
+            if hasattr(model.model, 'lossAV') and hasattr(model.model.lossAV, 'FC'):
+                logits = model.model.lossAV.FC(features)
+                probs = torch.softmax(logits, dim=-1)[:, 1]  # 話者クラスの確率
+            else:
+                # FC層がない場合はそのまま使用（モデルによって異なる可能性）
+                probs = torch.sigmoid(features)
+                
+            predScore = probs.detach().cpu()
             result[i] = predScore
-            print(sum(predScore < 0))
+            
+            # 負の値の数をデバッグ出力（通常0のはず）
+            print("negative scores:", (predScore < 0).sum().item())
 
     return result
 
@@ -399,10 +411,12 @@ def visualization(args, pred, tracks):
     for fidx, frame in tqdm.tqdm(enumerate(flist), total=len(flist)):
         image = cv2.imread(frame)
         for face in faces[fidx]:
-            clr = colorDict[int((face['score'] >= 0.0))]
-            if face['score'] >= 0:
+            # テンソルをPythonスカラーに変換
+            score_value = face['score'].item() if torch.is_tensor(face['score']) else face['score']
+            clr = colorDict[int((score_value >= 0.0))]
+            if score_value >= 0:
                 l.append(fidx)
-            txt = round(face['score'], 2)
+            txt = round(score_value, 2)
             p1 = (int(face['bbox'][0]), int(face['bbox'][1]))
             p2 = (int(face['bbox'][2]), int(face['bbox'][3]))
             cv2.rectangle(image, p1, p2, (0, clr, 255-clr), 3)
@@ -467,6 +481,8 @@ def main():
 
     # setup configuration
     default_config = {'cfg': './configs/multi.yaml'}
+    # dlhammer の引数二重パースを防ぐため、bootstrap 呼び出し前に sys.argv をリセット
+    sys.argv = [sys.argv[0]]
     cfg = bootstrap(default_cfg=default_config, print_cfg=True)
 
     warnings.filterwarnings("ignore")
