@@ -456,6 +456,19 @@ def main():
     #     ├── scene.pckl (scene detection result)
     #     ├── scores.pckl (ASD result)
     #     └── tracks.pckl (face tracking result)
+    # 
+    # scores.pckl
+    # ・ファイル形式：pickle 化された Python オブジェクト
+    # ・構造：
+    #  list[track_id] → torch.Tensor(shape=(N,))
+    #   N はそのトラックに属するフレーム数。
+    #   各値は対応フレームで「話している確率」（Active Speaker の Softmax 出力の class1 スコア ∈\[0,1\]）。
+    # tracks.pckl
+    # ・ファイル形式：pickle 化された Python オブジェクト
+    # ・構造：
+    #  list[track_id] → dict
+    #   • 'frame': numpy.ndarray(shape=(N,))   → 画面全体のフレーム番号
+    #   • 'bbox' : numpy.ndarray(shape=(N,4)) → 左上 (x1,y1) / 右下 (x2,y2) 座標（画像座標系）
     # ```
 
     # Initialization
@@ -566,6 +579,13 @@ def main():
 
     result = inference(args, cfg, visual_feature,
                        audio_feature, lenTracks=len(allTracks))
+
+    # 保存: 推論結果 (scores) とトラック情報
+    with open(os.path.join(args.pyworkPath, 'scores.pckl'), 'wb') as f:
+        pickle.dump(result, f)
+
+    with open(os.path.join(args.pyworkPath, 'tracks.pckl'), 'wb') as f:
+        pickle.dump(allTracks, f)
 
     visualization(args, result, allTracks)
 
