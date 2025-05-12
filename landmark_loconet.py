@@ -77,11 +77,18 @@ class Loconet(nn.Module):
 
         b, s, t, _, _ = landmark.shape
         landmarkTensor = torch.zeros((b, s, t, 82, 2, W, H), dtype=dtype, device=device)
-        landmark_idx = ((landmark > 0.0) | torch.isclose(landmark, torch.tensor(0.0))) & ((landmark < 1.0) | landmark.isclose(landmark, torch.tensor(1.0)))
 
-        landmark_masked = torch.where(landmark_idx, landmark, torch.tensor(float('nan')))
+        # Ensure constants are on the same device / dtype
+        zero = torch.tensor(0.0, dtype=dtype, device=device)
+        one = torch.tensor(1.0, dtype=dtype, device=device)
+        nan_const = torch.tensor(float('nan'), dtype=dtype, device=device)
+        max_val = torch.tensor(W - 1, dtype=dtype, device=device)
 
-        coordinate = torch.where(torch.isnan(landmark_masked), torch.tensor(float('nan')), torch.min(torch.floor(landmark_masked * W), torch.tensor(W - 1)))
+        landmark_idx = ((landmark > zero) | torch.isclose(landmark, zero)) & ((landmark < one) | torch.isclose(landmark, one))
+
+        landmark_masked = torch.where(landmark_idx, landmark, nan_const)
+
+        coordinate = torch.where(torch.isnan(landmark_masked), nan_const, torch.min(torch.floor(landmark_masked * W), max_val))
 
         # Convert coordinates to long, handling NaN to avoid indexing issues
         coord_0 = coordinate[..., 0].long()
