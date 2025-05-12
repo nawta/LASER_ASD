@@ -185,7 +185,7 @@ def track_shot(args, sceneFaces):
 # Source: https://github.com/cs-giung/face-detection-pytorch/blob/master/utils/bbox.py
 
 
-def crop_thumbnail(image, bounding_box, padding=1, size=100):
+def crop_thumbnail(image, bounding_box, padding=1, size=100, return_color=False):
 
     # infos in original image
     w, h = image.shape[1], image.shape[0]
@@ -223,7 +223,12 @@ def crop_thumbnail(image, bounding_box, padding=1, size=100):
                                  right=0, borderType=cv2.BORDER_CONSTANT, value=[0, 0, 0])
 
     output = img[p1y:p2y, p1x:p2x]
-    output = cv2.resize(output, (size, size), interpolation=cv2.INTER_LINEAR)
+    output_color = cv2.resize(output, (size, size), interpolation=cv2.INTER_LINEAR)
+    
+    if not return_color:
+        output = cv2.cvtColor(output_color, cv2.COLOR_BGR2GRAY)
+    else:
+        output = output_color
 
     # infos in thumbnail
     s_x = size / (p2x - p1x)
@@ -231,7 +236,10 @@ def crop_thumbnail(image, bounding_box, padding=1, size=100):
     new_bbox = [(x1 - p1x) * s_x, (y1 - p1y) * s_y,
                 (x2 - p1x) * s_x, (y2 - p1y) * s_y]
 
-    return output, new_bbox
+    if return_color:
+        return output, new_bbox, output_color
+    else:
+        return output, new_bbox
 
 
 def side_padding(input_tensor, amount, side):
@@ -259,13 +267,19 @@ def prepare_input(args, tracks):
         args.pyframesPath, '*.jpg'))  # Read the frames
     flist.sort()
 
+    args.pycropFramesPath = os.path.join(args.savePath, 'pycrop_frames')
+    os.makedirs(args.pycropFramesPath, exist_ok=True)
+
     # prepare inputs
-    visual_info = [{'frame': [], 'faceCrop': []} for i in range(len(tracks))]
+    visual_info = [{'frame': [], 'faceCrop': [], 'faceCropPaths': []} for i in range(len(tracks))]
 
     H = 112
 
     # loop through each face tracks
     for tidx, track in enumerate(tracks):
+        track_frames_dir = os.path.join(args.pycropFramesPath, f'track_{tidx:06d}')
+        os.makedirs(track_frames_dir, exist_ok=True)
+        
         for fidx, frame_num in enumerate(track['frame']):
             # read in the frame that contains the current track
             frameFile = os.path.join(
@@ -273,14 +287,21 @@ def prepare_input(args, tracks):
             frame = cv2.imread(frameFile)
 
             # crop face
-            faceCrop, _ = crop_thumbnail(
-                frame, track['bbox'][fidx], padding=0.775, size=H)
+            faceCrop, faceCropColor = crop_thumbnail(
+                frame, track['bbox'][fidx], padding=0.775, size=H, return_color=True)
+            
+            # Save the color face crop for future use
+            faceCropPath = os.path.join(track_frames_dir, f'frame_{frame_num:06d}.jpg')
+            cv2.imwrite(faceCropPath, faceCropColor)
+            
             faceCrop = cv2.cvtColor(faceCrop, cv2.COLOR_BGR2GRAY)
             faceCrop = torch.from_numpy(faceCrop)
 
             # store information
             visual_info[tidx]['frame'].append(frame_num)
             visual_info[tidx]['faceCrop'].append(faceCrop)
+            visual_info[tidx]['faceCropPaths'].append(faceCropPath)
+            
         visual_info[tidx]['faceCrop'] = torch.stack(
             visual_info[tidx]['faceCrop'], dim=0)
 
@@ -343,6 +364,13 @@ def prepare_input(args, tracks):
     audio_segments = []
     for tidx, track in enumerate(tracks):
         audio_file = os.path.join(args.pycropPath, f'audio{tidx:06d}.wav')
+        frames_dir = os.path.join(args.pycropFramesPath, f'track_{tidx:06d}')
+        
+        frame_paths = []
+        for frame_num in track['frame']:
+            frame_path = os.path.join(frames_dir, f'frame_{frame_num:06d}.jpg')
+            frame_paths.append(frame_path)
+        
         audio_segments.append({
             "track_id": tidx,
             "audio_file": audio_file,
@@ -350,7 +378,9 @@ def prepare_input(args, tracks):
             "end_frame": int(track['frame'][-1]),
             "fps": 25,
             "start_time": float(track['frame'][0]) / 25.0,
-            "end_time": float(track['frame'][-1]) / 25.0
+            "end_time": float(track['frame'][-1]) / 25.0,
+            "face_frames_dir": frames_dir,
+            "face_frames": frame_paths
         })
 
     # メタデータをJSONファイルに保存
@@ -358,7 +388,7 @@ def prepare_input(args, tracks):
     with open(json_path, 'w') as f:
         json.dump(audio_segments, f, indent=2)
     sys.stderr.write(time.strftime("%Y-%m-%d %H:%M:%S") +
-                     f" Saved audio segments metadata to {json_path} \r\n")
+                     f" Saved audio segments metadata with face frames to {json_path} \r\n")
 
     return visual_feature, audio_feature
 
