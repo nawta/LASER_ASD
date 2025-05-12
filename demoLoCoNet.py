@@ -14,7 +14,7 @@ import pdb
 import math
 import python_speech_features
 from pydub import AudioSegment
-
+import json
 from scipy import signal
 from shutil import rmtree
 from scipy.io import wavfile
@@ -337,6 +337,28 @@ def prepare_input(args, tracks):
         audioFeature = torch.from_numpy(audioFeature).unsqueeze(0).unsqueeze(0)
         audio_feature.append(audioFeature)
 
+    # 音声セグメントのメタデータを作成
+    audio_segments = []
+    for tidx, track in enumerate(tracks):
+        audio_file = os.path.join(args.pycropPath, f'audio{tidx:06d}.wav')
+        audio_segments.append({
+            "track_id": tidx,
+            "audio_file": audio_file,
+            "start_frame": int(track['frame'][0]),
+            "end_frame": int(track['frame'][-1]),
+            "fps": 25,
+            "start_time": float(track['frame'][0]) / 25.0,
+            "end_time": float(track['frame'][-1]) / 25.0
+        })
+
+    # メタデータをJSONファイルに保存
+    json_path = os.path.join(args.pyworkPath, 'audio_segments.json')
+    with open(json_path, 'w') as f:
+        json.dump(audio_segments, f, indent=2)
+    sys.stderr.write(time.strftime("%Y-%m-%d %H:%M:%S") +
+                     f" Saved audio segments metadata to {json_path} \r\n")
+
+
     return visual_feature, audio_feature
 
 
@@ -469,6 +491,30 @@ def main():
     #  list[track_id] → dict
     #   • 'frame': numpy.ndarray(shape=(N,))   → 画面全体のフレーム番号
     #   • 'bbox' : numpy.ndarray(shape=(N,4)) → 左上 (x1,y1) / 右下 (x2,y2) 座標（画像座標系）
+    # audio_segments.json   
+    # ・ファイル形式：JSON
+    # ・構造：
+    #  list[track_id] → dict
+    #   • 'track_id': int   → トラック識別子（tracks.pcklのインデックス）
+    #   • 'audio_file': str   → 対応する音声ファイルのパス
+    #   • 'start_frame': int   → 対応する映像フレーム番号
+    #   • 'end_frame': int   → 対応する映像フレーム番号
+    #   • 'fps': int   → フレームレート（固定値25）
+    #   • 'start_time': float   → 秒単位の開始時間
+    #   • 'end_time': float   → 秒単位の終了時間
+    # 例：
+    # [
+    #   {
+    #     "track_id": 0,
+    #     "audio_file": "/path/to/pycrop/audio000000.wav",
+    #     "start_frame": 25,
+    #     "end_frame": 249,
+    #     "fps": 25,
+    #     "start_time": 1.0,
+    #     "end_time": 9.96
+    #   },
+    #   ...
+    # ]
     # ```
 
     # Initialization
