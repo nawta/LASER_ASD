@@ -1,5 +1,7 @@
 FROM nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
 
+WORKDIR /app
+
 # ----------------------------  
 # 基本ツールとPythonのセットアップ
 # ----------------------------  
@@ -14,6 +16,7 @@ RUN apt-get update && \
         wget \
         ffmpeg \
         libsm6 \
+        unzip \
         libxext6 \
         libglib2.0-0 \
         ca-certificates \
@@ -45,12 +48,19 @@ RUN pip install --no-cache-dir \
 COPY docker/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
-# ----------------------------  
-# プロジェクト配置
-# ----------------------------  
-WORKDIR /workspace/LASER_ASD
-COPY . /workspace/LASER_ASD
+# Copy application code
+COPY . /app/
 
-ENV PYTHONPATH=/workspace/LASER_ASD
+# Download LASER_ASD model from Github Release
+RUN wget https://github.com/nawta/LASER_ASD/releases/download/checkpoints_v0.0.0/LoCoNet_LASER.model.zip -O LoCoNet_LASER.model.zip
+RUN wget https://github.com/nawta/LASER_ASD/releases/download/checkpoints_v0.0.0/TalkNCE_LASER.model.zip -O TalkNCE_LASER.model.zip
+RUN unzip LoCoNet_LASER.model.zip
+RUN unzip TalkNCE_LASER.model.zip
 
-CMD ["bash"] 
+
+# Create directory for shared data
+RUN mkdir -p /shared_data
+
+ENV PYTHONPATH=/app
+
+CMD ["tail", "-f", "/dev/null"]
