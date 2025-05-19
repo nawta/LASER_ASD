@@ -547,6 +547,11 @@ def main():
     # Save the detected face clips (audio+video) in this process
     os.makedirs(args.pycropPath, exist_ok=True)
     os.makedirs(args.pyframesViz, exist_ok=True)
+    # 発話セグメントの各種保存パス
+    args.pycropSpeechPath = os.path.join(args.savePath, 'pycrop_speech_segmented')  # 音声
+    args.pyframesSpeechPath = os.path.join(args.savePath, 'pyframes_speech_segmented')  # フレーム
+    os.makedirs(args.pycropSpeechPath, exist_ok=True)
+    os.makedirs(args.pyframesSpeechPath, exist_ok=True)
 
     # setup configuration
     default_config = {'cfg': './configs/multi.yaml'}
@@ -656,6 +661,126 @@ def main():
         pickle.dump(combined, f)
 
     visualization(args, result, allTracks)
+
+    # ======================================================
+    # 追加: 話者確率を用いて各トラックを音声発話区間で細分化
+    # ======================================================
+
+    speech_segments_meta = []          # JSON 用メタデータ
+    segmented_tracks = []             # pickle 用詳細情報
+
+    threshold = 0.5                   # 発話とみなす確率閾値
+    min_speech_frames = 10            # 最低フレーム数 (25fps で 0.4 秒)
+
+    for tidx, track in enumerate(allTracks):
+        # スコアを numpy 配列へ
+        scores = result[tidx].detach().cpu().numpy().flatten()
+        frames_arr = track['frame']
+        bboxes_arr = track['bbox']
+
+        speaking = scores >= threshold
+        seg_start = None
+        seg_idx = 0
+
+        for idx, is_speaking in enumerate(speaking):
+            last_frame = (idx == len(speaking) - 1)
+
+            if is_speaking and seg_start is None:
+                # セグメント開始
+                seg_start = idx
+            # セグメント終了条件: 非発話になった or 最後のフレーム
+            if seg_start is not None and ((not is_speaking) or last_frame):
+                end_idx = idx if not is_speaking else idx + 1
+
+                # セグメント長チェック
+                if end_idx - seg_start >= min_speech_frames:
+                    segment_frames = frames_arr[seg_start:end_idx]
+                    segment_bboxes = bboxes_arr[seg_start:end_idx]
+
+                    start_frame = int(segment_frames[0])
+                    end_frame = int(segment_frames[-1])
+                    start_time = start_frame / 25.0
+                    end_time = end_frame / 25.0
+
+                    # 音声切り出し
+                    audio_out_path = os.path.join(
+                        args.pycropSpeechPath,
+                        f'audio{tidx:06d}_{seg_idx:02d}.wav'
+                    )
+
+                    ffmpeg_cmd = (
+                        "ffmpeg -y -i %s -async 1 -ac 1 -vn -acodec pcm_s16le "
+                        "-ar 16000 -threads %d -ss %.3f -to %.3f %s -loglevel panic" % (
+                            args.audioFilePath,
+                            args.nDataLoaderThread,
+                            start_time,
+                            end_time,
+                            audio_out_path,
+                        )
+                    )
+                    subprocess.call(ffmpeg_cmd, shell=True, stdout=None)
+
+                    # --------- 顔フレームをクロップして保存 ---------
+                    frame_dir = os.path.join(
+                        args.pyframesSpeechPath,
+                        f'{tidx:06d}_{seg_idx:02d}'
+                    )
+                    os.makedirs(frame_dir, exist_ok=True)
+
+                    for j, (frame_idx, bbox) in enumerate(zip(segment_frames, segment_bboxes)):
+                        frame_file = os.path.join(args.pyframesPath, f'{int(frame_idx)+1:06d}.jpg')
+                        img = cv2.imread(frame_file)
+                        if img is None:
+                            continue
+                        x1, y1, x2, y2 = [int(round(v)) for v in bbox]
+                        x1 = max(0, x1)
+                        y1 = max(0, y1)
+                        x2 = min(img.shape[1]-1, x2)
+                        y2 = min(img.shape[0]-1, y2)
+                        if x2 <= x1 or y2 <= y1:
+                            continue
+                        crop_img = img[y1:y2, x1:x2]
+                        out_frame_path = os.path.join(frame_dir, f'{j:04d}.jpg')
+                        cv2.imwrite(out_frame_path, crop_img)
+
+                    # メタデータ登録
+                    speech_segments_meta.append({
+                        "track_id": tidx,
+                        "segment_id": seg_idx,
+                        "audio_file": audio_out_path,
+                        "frames_dir": frame_dir,
+                        "start_frame": start_frame,
+                        "end_frame": end_frame,
+                        "fps": 25,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                    })
+
+                    segmented_tracks.append({
+                        'track_id': tidx,
+                        'segment_id': seg_idx,
+                        'frame': segment_frames,
+                        'bbox': segment_bboxes,
+                        'score': scores[seg_start:end_idx],
+                    })
+
+                    seg_idx += 1
+
+                # セグメントをリセット
+                seg_start = None
+
+    # 保存: JSON & pickle
+    json_seg_path = os.path.join(args.pyworkPath, 'audio_segments_speech_segmented.json')
+    with open(json_seg_path, 'w') as f:
+        json.dump(speech_segments_meta, f, indent=2)
+    sys.stderr.write(time.strftime("%Y-%m-%d %H:%M:%S") +
+                     f" Saved speech-segmented audio metadata to {json_seg_path} \r\n")
+
+    pckl_seg_path = os.path.join(args.pyworkPath, 'tracks_scores_speech_segmented.pckl')
+    with open(pckl_seg_path, 'wb') as f:
+        pickle.dump(segmented_tracks, f)
+    sys.stderr.write(time.strftime("%Y-%m-%d %H:%M:%S") +
+                     f" Saved speech-segmented tracks to {pckl_seg_path} \r\n")
 
 
 if __name__ == '__main__':
