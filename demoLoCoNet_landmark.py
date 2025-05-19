@@ -479,21 +479,31 @@ def main():
     #     ├── audio_segments.json (audio segment metadata)
     #     ├── faces.pckl (face detection result)
     #     ├── scene.pckl (scene detection result)
-    #     ├── scores.pckl (ASD result)
-    #     └── tracks.pckl (face tracking result)
+    #     └── tracks_scores.pckl (ASD result)
+    #      
     # 
-    # scores.pckl
-    # ・ファイル形式：pickle 化された Python オブジェクト
-    # ・構造：
-    #  list[track_id] → torch.Tensor(shape=(N,))
-    #   N はそのトラックに属するフレーム数。
-    #   各値は対応フレームで「話している確率」（Active Speaker の Softmax 出力の class1 スコア ∈\[0,1\]）。
-    # tracks.pckl
+    # faces.pckl
+    # このファイルには顔検出の結果が保存されています。構造は以下の通りです：
+    # リスト[フレーム番号] → リスト[検出された顔]
+    #   各検出顔は辞書型：
+    #     'frame': フレーム番号
+    #     'bbox': バウンディングボックス座標 [x1, y1, x2, y2] のリスト
+    #     'conf': 検出信頼度スコア
+    # このデータはinference_video関数で生成され、S3FD顔検出器を使って各フレームの顔を検出した結果です。
+    #
+    # scene.pckl
+    # このファイルにはシーン検出の結果が保存されています。構造は以下の通りです：
+    # リスト[シーン] → タプル(開始タイムコード, 終了タイムコード)
+    # シーン検出はscene_detect関数で行われ、ContentDetectorを使用して映像内の異なるシーンの境界を検出します。各シーンの開始・終了フレームが記録され、後の処理で使用されます。
+    # これらのファイルはTalkNet/LASER_ASDの処理パイプラインで使用され、顔トラッキングや話者検出の前処理として重要な役割を果たしています。
+    #
+    # tracks_scores.pckl
     # ・ファイル形式：pickle 化された Python オブジェクト
     # ・構造：
     #  list[track_id] → dict
     #   • 'frame': numpy.ndarray(shape=(N,))   → 画面全体のフレーム番号
     #   • 'bbox' : numpy.ndarray(shape=(N,4)) → 左上 (x1,y1) / 右下 (x2,y2) 座標（画像座標系）
+    #   • 'score': torch.Tensor(shape=(N,))   → 話者検出の信頼度スコア. 各値は対応フレームで「話している確率」（Active Speaker の Softmax 出力の class1 スコア ∈\[0,1\]）。
     # audio_segments.json
     # ・ファイル形式：JSON
     # ・構造：
@@ -633,12 +643,17 @@ def main():
     result = inference(args, cfg, visual_feature,
                        audio_feature, lenTracks=len(allTracks))
 
-    # 保存: 推論結果 (scores) とトラック情報
-    with open(os.path.join(args.pyworkPath, 'scores.pckl'), 'wb') as f:
-        pickle.dump(result, f)
-
-    with open(os.path.join(args.pyworkPath, 'tracks.pckl'), 'wb') as f:
-        pickle.dump(allTracks, f)
+    # 保存: トラック情報とスコアを統合した pickle
+    combined = []
+    for tidx, track in enumerate(allTracks):
+        combined.append({
+            'track_id': tidx,
+            'frame': track['frame'],
+            'bbox': track['bbox'],
+            'score': result[tidx]  # torch.Tensor(shape=(N,))
+        })
+    with open(os.path.join(args.pyworkPath, 'tracks_scores.pckl'), 'wb') as f:
+        pickle.dump(combined, f)
 
     visualization(args, result, allTracks)
 
