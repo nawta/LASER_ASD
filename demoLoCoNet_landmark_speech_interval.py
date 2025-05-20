@@ -75,6 +75,9 @@ def args_create():
     parser.add_argument('--duration',              type=int, default=0,
                         help='The duration of the video, when set as 0, will extract the whole video')
 
+    parser.add_argument('--crop_padding_ratio',  type=float,
+                        default=0.2, help='Padding ratio around face bbox when cropping frames (e.g., 0.2 adds 20% margin)')
+
     args = parser.parse_args()
 
     args.videoPath = glob.glob(os.path.join(
@@ -733,6 +736,14 @@ def main():
                         if img is None:
                             continue
                         x1, y1, x2, y2 = [int(round(v)) for v in bbox]
+                        # ---------------- 追加: パディング ----------------
+                        pad_x = int((x2 - x1) * args.crop_padding_ratio / 2)
+                        pad_y = int((y2 - y1) * args.crop_padding_ratio / 2)
+                        x1 -= pad_x
+                        y1 -= pad_y
+                        x2 += pad_x
+                        y2 += pad_y
+                        # -------------------------------------------------
                         x1 = max(0, x1)
                         y1 = max(0, y1)
                         x2 = min(img.shape[1]-1, x2)
