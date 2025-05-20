@@ -128,6 +128,24 @@ Here are some instructions in using the code:
    ```
 4. Then, on line 515 and 516, if you want to shift by some second, change the shift_ms (in 1s = 1000ms). Or if you want to swap the audio, change swap = True. Otherwise, setting to 0 and false will do the normal demo.
 
+### Speech-Segmented Demo (拡張機能)
+
+> **2025/05 追加**  
+> `demoLoCoNet_landmark_speech_interval.py` に発話区間を自動で細分化する機能を追加しました。これにより「顔が映っている」だけではなく「実際に話している」時間帯ごとに音声・映像を切り出せます。
+
+* **発話セグメント定義**  
+  LoCoNet が出力するフレーム毎の発話確率 ≥ 0.5 が 10 フレーム (≈0.4s) 以上連続した区間を 1 セグメントとみなします。
+* **出力**  
+  * 音声: `pycrop_speech_segmented/` 配下に `audio{track_id:06d}_{seg_id:02d}.wav` として保存  
+  * 顔フレーム: `pyframes_speech_segmented/{track_id:06d}_{seg_id:02d}/` にクロップ済み JPG 連番で保存  
+  * メタデータ: `pywork/audio_segments_speech_segmented.json` (JSON) と `pywork/tracks_scores_speech_segmented.pckl` (pickle) に保存  
+
+#### 使い方
+
+元のデモと同様に `demoLoCoNet_landmark_speech_interval.py` を実行するだけで、自動で上記ファイルが生成されます。既存の `audio_segments.json` なども併存するので、用途に応じて選択可能です。
+
+---
+
 ### Citation
 
 Please cite the following if our paper or code is helpful to your research.
