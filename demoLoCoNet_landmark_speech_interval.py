@@ -76,7 +76,7 @@ def args_create():
                         help='The duration of the video, when set as 0, will extract the whole video')
 
     parser.add_argument('--crop_padding_ratio',  type=float,
-                        default=0.2, help='Padding ratio around face bbox when cropping frames (e.g., 0.2 adds 20% margin)')
+                        default=0.2, help='Padding ratio around face bbox when cropping frames (e.g., 0.2 adds 20% (10 for above and below) margin)')
 
     args = parser.parse_args()
 
@@ -700,6 +700,21 @@ def main():
                     segment_frames = frames_arr[seg_start:end_idx]
                     segment_bboxes = bboxes_arr[seg_start:end_idx]
 
+                    # ---------------------
+                    # パディング済みバウンディングボックスを生成
+                    # ---------------------
+                    padded_bboxes = []
+                    for bb in segment_bboxes:
+                        x1_, y1_, x2_, y2_ = [int(round(v)) for v in bb]
+                        pad_x_ = int((x2_ - x1_) * args.crop_padding_ratio / 2)
+                        pad_y_ = int((y2_ - y1_) * args.crop_padding_ratio / 2)
+                        x1_p = x1_ - pad_x_
+                        y1_p = y1_ - pad_y_
+                        x2_p = x2_ + pad_x_
+                        y2_p = y2_ + pad_y_
+                        padded_bboxes.append([x1_p, y1_p, x2_p, y2_p])
+                    padded_bboxes = np.array(padded_bboxes)
+                    
                     start_frame = int(segment_frames[0])
                     end_frame = int(segment_frames[-1])
                     start_time = start_frame / 25.0
@@ -730,20 +745,13 @@ def main():
                     )
                     os.makedirs(frame_dir, exist_ok=True)
 
-                    for j, (frame_idx, bbox) in enumerate(zip(segment_frames, segment_bboxes)):
+                    for j, (frame_idx, bbox) in enumerate(zip(segment_frames, padded_bboxes)):
                         frame_file = os.path.join(args.pyframesPath, f'{int(frame_idx)+1:06d}.jpg')
                         img = cv2.imread(frame_file)
                         if img is None:
                             continue
                         x1, y1, x2, y2 = [int(round(v)) for v in bbox]
-                        # ---------------- 追加: パディング ----------------
-                        pad_x = int((x2 - x1) * args.crop_padding_ratio / 2)
-                        pad_y = int((y2 - y1) * args.crop_padding_ratio / 2)
-                        x1 -= pad_x
-                        y1 -= pad_y
-                        x2 += pad_x
-                        y2 += pad_y
-                        # -------------------------------------------------
+                        # 既にパディング済み
                         x1 = max(0, x1)
                         y1 = max(0, y1)
                         x2 = min(img.shape[1]-1, x2)
@@ -771,7 +779,7 @@ def main():
                         'track_id': tidx,
                         'segment_id': seg_idx,
                         'frame': segment_frames,
-                        'bbox': segment_bboxes,
+                        'bbox': padded_bboxes,
                         'score': scores[seg_start:end_idx],
                     })
 
